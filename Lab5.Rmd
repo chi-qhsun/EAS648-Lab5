@@ -1,0 +1,132 @@
+---
+title: "Lab05"
+author: "Chi Sun"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, message=FALSE, warning=FALSE}  
+# Loading the terra library for spatial data manipulation
+library(terra)
+
+# Importing land cover/use data and other spatial layers
+NLCD_2001 <- rast("NLCD_2001_SL.tif")
+NLCD_2016 <- rast("NLCD_2016_SL.tif")
+Park_dist <- rast("Parks_dist_SL.tif")  # Distance to parks (Euclidean)
+Rd_dns1km <- rast("Rd_dns1km_SL.tif")  # Road density
+WaterDist <- rast("WaterDist_SL.tif")  # Distance to water bodies (Euclidean)
+DEM <- rast("DEM_SL.tif")  # Elevation data
+allrasters <- c(NLCD_2001, NLCD_2016, Park_dist, Rd_dns1km, WaterDist, DEM)
+```
+
+
+```{r, message=FALSE, warning=FALSE}
+# Loading required libraries for spatial sampling and analysis
+library(leaflet)
+library(ape)
+set.seed(10086)  # Setting seed for reproducibility
+
+# Generating random and regular spatial samples from the raster data
+sampleSLrnd <- spatSample(allrasters, size=100, "random", cells=TRUE, xy=TRUE)
+sampleSLreg <- spatSample(allrasters, size=100, "regular", cells=TRUE, xy=TRUE)
+
+# Flattening the spatial data to a dataframe with latitude and longitude
+flat_data <- as.data.frame(sampleSLrnd)
+flat_data = na.omit(flat_data)
+
+# Calculating distances between points and creating an inverse distance matrix
+dist_matrix <- as.matrix(dist(cbind(flat_data$x, flat_data$y)))
+dist_matix.inv <- 1/dist_matrix
+diag(dist_matix.inv) <- 0
+
+# Calculating Moran's I for road density
+Moran.I(flat_data$Rd_dns1km_SL, dist_matix.inv)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Loading tidyverse for data manipulation
+library(tidyverse)
+
+# Converting all raster layers to a dataframe and filtering out no data values
+allrastersSL <- as.data.frame(allrasters, xy=TRUE)
+allrastersSL <- allrastersSL %>%
+  filter (NLCD_2001_SL != 128)  # Removing no data values
+
+allrastersSL <- allrastersSL %>%
+    mutate(urbanChg = 
+             # Places that are not urban in 2001
+             (NLCD_2001_SL != 21 & NLCD_2001_SL != 22 & NLCD_2001_SL != 23 & NLCD_2001_SL != 24) 
+           &  # and
+             # is now urban in 2016
+             (NLCD_2016_SL == 21 | NLCD_2016_SL == 22  | NLCD_2016_SL == 23 | NLCD_2016_SL == 24)
+           ) 
+
+# Loading additional libraries for data manipulation
+library(dplyr)
+library(plyr)
+library(reshape2)
+library(plotly)
+
+# Filtering and categorizing urban and non-urban areas from the data
+SL <- allrastersSL %>%
+  filter(NLCD_2001_SL != 21 & NLCD_2001_SL != 22 & NLCD_2001_SL != 23 & NLCD_2001_SL != 24)
+
+# Extracting developed (urban) and undeveloped (non-urban) cells
+newUrban <- SL %>% filter(urbanChg == TRUE)
+nonUrban <- SL %>% filter(urbanChg == FALSE)
+
+# Sampling undeveloped data to be twice as large as developed data
+index <- sample(1:nrow(nonUrban), (round(nrow(newUrban) * 2)))
+SLsampleUrban <- nonUrban[index, ]
+
+# Combining original developed and sampled undeveloped data
+SLsample <- rbind(SLsampleUrban, newUrban)
+
+# Subsampling data for training and testing datasets
+index <- sample(1:nrow(SLsample), (round(nrow(SLsample) * 0.01)))
+SLsample <- SLsample[index, ]
+
+# Adding an ID column for splitting data into training and test sets
+SLsample <- SLsample %>% dplyr::mutate(id = row_number())
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Creating training set (70% of data)
+train <- SLsample %>% sample_frac(.70)
+
+# Creating test set (remaining 30% of data)
+test <- anti_join(SLsample, train, by = 'id')
+
+# Fitting a logistic regression model with binomial family
+fit <- glm(urbanChg ~ Parks_dist_SL + Rd_dns1km_SL + WaterDist_SL + DEM_SL, data=train, family=binomial())
+# Displaying model summary
+summary(fit)
+
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Loading required package for ROC analysis
+library(ROCR)
+
+# Generating ROC curve for model prediction and coloring it by cutoff
+pred_label <- predict(fit, newdata = test)
+pred <- prediction(pred_label, test$urbanChg)
+perf <- performance(pred, "tpr", "fpr")
+plot(perf, colorize = TRUE)
+
+# Calculating and displaying AUC for model evaluation
+auc_ROCR <- performance(pred, measure = "auc")
+auc_ROCR <- auc_ROCR@y.values[[1]]
+auc_ROCR
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Generating predictions using the fitted model on all raster data
+predicted <- predict(allrasters, fit)
+# Plotting the predicted values
+plot(predicted)
+```
