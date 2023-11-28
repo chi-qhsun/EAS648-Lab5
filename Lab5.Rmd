@@ -130,3 +130,78 @@ predicted <- predict(allrasters, fit)
 # Plotting the predicted values
 plot(predicted)
 ```
+
+Analyze the Salt Lake City dataset. Fit a model that explains suitability for urban development (provide evidence of goodness of model fit). What characteristics contribute to urban development in Salt Lake? What variable might you add to better explain urban development. (1-2 paragraphs)
+
+As the model shows above, I use the NLCD 2001, NLCD 2016 as data source. Road density, distance to water body, distance to park and elevation of Saltlake city as independent variables. To fit the model, we use GLM model and binomial family. From the fit summary of the model, we can tell that all the factors we put into consideration have significant influence on saltlake city urbanization.
+
+All of the factors are at least > 99.8% related to the change of urban area. The most influential factor is road density, then elevation, distance to water body, distance to park. Road density is a determine factor to urbanization, due to the summarize.
+
+From the ROC, we can tell that the curve is rising drastically, which means the model is efficient at detecting urbanizing areas. For the threshold shows in the ROC legend, we can approximately say the best threshold for this model is around -4.1. This threshold can not only maximum the TPR to above 90% and minimum the FPR below 20%. Also, AUC = 0.9541638 is very close to 1, which means the model is good at predicting the changing area.
+
+I will add demographic data like population density, age distribution, and household composition as factors to describe the urbanization. High population density often signifies urban areas with developed infrastructure and amenities, while lower densities are typical of rural or suburban regions. This density influences various aspects of urban planning, including the need for housing, transportation, and public services.This distribution impacts the demand for different types of services and infrastructure. For example, a youthful population may increase the need for schools and recreational facilities Age distribution entails the proportions of various age groups within a population, such as children, working-age adults, and the elderly. 
+
+```{r, message=FALSE, warning=FALSE}
+library(fastcluster)
+library(graphics)
+library(ggplot2)
+library(ggdendro)
+library(sf)
+amenData<- st_read("AmenDataAll.shp")
+st_geometry(amenData)
+geomData = st_sfc(amenData$geometry)
+```
+
+```{r, message=FALSE, warning=FALSE}
+amenData$ZooEmpDist_log <- log(amenData$ZooDistEmp + 0.00000001)
+amenData$HotelEmpDist_log <- log(amenData$HotelDistE + 0.00000001)
+amenData$HistMonDist_log <- log(amenData$HistMon_Di + 0.00000001)
+amenData$HighEdEmpDist_log <- log(amenData$HigherEdDi + 0.00000001)
+amenData$GolfEmpDist_log <- log(amenData$GolfDistEm + 0.00000001)
+amenData$SocialNorm <- amenData$Nat_Flickr/(amenData$serPop10 + 1)
+amenData$HousingChg <- amenData$Urb2011 - amenData$Urb2001
+
+amenDataDF<-amenData[,c("SocialNorm", "HousingChg", "Frst2011", "WaterPct", "distcoast", "DEM_max","DEM_range", "HikeLength","ZooEmpDist_log", "HotelEmpDist_log","HistMonDist_log", "HighEdEmpDist_log", "GolfEmpDist_log")]
+
+amenDataDF <- na.omit(amenDataDF)
+amenDataDF <- as.data.frame(amenDataDF)[1:12]
+db_scaled <- scale(amenDataDF)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Determine number of clusters
+wss <- (nrow(db_scaled)-1)*sum(apply(db_scaled,2,var))
+for (i in 2:15) wss[i] <- sum(kmeans(db_scaled,
+   centers=i)$withinss)
+plot(1:15, wss, type="b", xlab="Number of Clusters",
+  ylab="Within groups sum of squares")
+```
+
+
+```{r}
+# K-Means Cluster Analysis
+fit <- kmeans(db_scaled, 5) # 5 cluster solution
+aggregate(db_scaled,by=list(fit$cluster),FUN=mean)
+amenData <- data.frame(amenData, fit$cluster)
+st_geometry(amenData) <- geomData
+ggplot() + 
+  geom_sf(data = amenData, mapping = aes(fill = as.factor(fit.cluster)), color = NA) + 
+  theme(legend.position = "right") +
+  ggtitle("Clusters based on Kmeans")
+```
+
+
+Analyze the database of amenity landscape characteristics using a clustering technique. Choose variables based on a thematic inquiry of your choice. Visualize ad provide qualitative descriptions of the groups that you derive from the clustering techniques. Provide evidence of you characterizations. Provide a map of your cluster analysis. Give an explanation of the spatial distribution of these groups. (1-2 paragraphs)
+
+
+different regions of the United States have been divided into five distinct cluster groups. Each group represents regions with similar landscape features and socio-economic indicators.  We can use the aggregate average to determine the clustering result.
+
+Group 1 (Red): This group could represent urban and suburban areas with higher population densities and lower social activity. Based on the negative values for housing change, these areas might be mature communities with stable or slightly declining populations.
+
+Group 2 (Dark Green): The dark green areas likely indicate inland regions with rapid housing growth, further from the coast, and with little terrain variation. These could be areas experiencing urbanization, with new housing and commercial developments underway.
+
+Group 3 (Green): Green areas might be rich in natural resources, such as high forest and water body coverage. These areas have less housing change, possibly due to natural conservation or land use regulations.
+
+Group 4 (Blue): This group has moderate housing changes and lower terrain undulation. These regions could be relatively flat terrains with moderate levels of development, neither urban centers nor distant natural preserves.
+
+Group 5 (Pink): This group shows the highest housing growth and terrain variation. It could represent emerging suburbs or rapidly developing urban fringe areas with new residential and commercial developments.
